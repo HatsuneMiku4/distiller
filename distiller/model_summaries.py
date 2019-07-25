@@ -20,17 +20,19 @@
     - optimizer state
     - model details
 """
-import os
-import pydot
-from functools import partial
-import pandas as pd
-from tabulate import tabulate
 import logging
+import os
+from functools import partial
+
+import pandas as pd
+import pydot
 import torch
 import torch.optim
+from tabulate import tabulate
+
 import distiller
-from .summary_graph import SummaryGraph
 from .data_loggers import PythonLogger, CsvLogger
+from .summary_graph import SummaryGraph
 
 msglogger = logging.getLogger()
 
@@ -78,7 +80,9 @@ def model_summary(model, what, dataset=None):
         raise ValueError("%s is not a supported summary type" % what)
 
 
-def weights_sparsity_summary(model, return_total_sparsity=False, param_dims=[2, 4]):
+def weights_sparsity_summary(model, return_total_sparsity=False, param_dims=None):
+    if param_dims is None:
+        param_dims = [2, 4]
     df = pd.DataFrame(columns=['Name', 'Shape', 'NNZ (dense)', 'NNZ (sparse)',
                                'Cols (%)', 'Rows (%)', 'Ch (%)', '2D (%)', '3D (%)',
                                'Fine (%)', 'Std', 'Mean', 'Abs-Mean'])
@@ -96,18 +100,18 @@ def weights_sparsity_summary(model, return_total_sparsity=False, param_dims=[2, 
                 distiller.size_to_str(param.size()),
                 torch.numel(param),
                 int(_density * param.numel()),
-                distiller.sparsity_cols(param)*100,
-                distiller.sparsity_rows(param)*100,
-                distiller.sparsity_ch(param)*100,
-                distiller.sparsity_2D(param)*100,
-                distiller.sparsity_3D(param)*100,
-                (1-_density)*100,
+                distiller.sparsity_cols(param) * 100,
+                distiller.sparsity_rows(param) * 100,
+                distiller.sparsity_ch(param) * 100,
+                distiller.sparsity_2D(param) * 100,
+                distiller.sparsity_3D(param) * 100,
+                (1 - _density) * 100,
                 param.std().item(),
                 param.mean().item(),
                 param.abs().mean().item()
             ])
 
-    total_sparsity = (1 - sparse_params_size/params_size)*100
+    total_sparsity = (1 - sparse_params_size / params_size) * 100
 
     df.loc[len(df.index)] = ([
         'Total sparsity:',
@@ -123,7 +127,9 @@ def weights_sparsity_summary(model, return_total_sparsity=False, param_dims=[2, 
     return df
 
 
-def weights_sparsity_tbl_summary(model, return_total_sparsity=False, param_dims=[2, 4]):
+def weights_sparsity_tbl_summary(model, return_total_sparsity=False, param_dims=None):
+    if param_dims is None:
+        param_dims = [2, 4]
     df, total_sparsity = weights_sparsity_summary(model, return_total_sparsity=True, param_dims=param_dims)
     t = tabulate(df, headers='keys', tablefmt='psql', floatfmt=".5f")
     if return_total_sparsity:
@@ -131,7 +137,9 @@ def weights_sparsity_tbl_summary(model, return_total_sparsity=False, param_dims=
     return t
 
 
-def masks_sparsity_summary(model, scheduler, param_dims=[2, 4]):
+def masks_sparsity_summary(model, scheduler, param_dims=None):
+    if param_dims is None:
+        param_dims = [2, 4]
     df = pd.DataFrame(columns=['Name', 'Fine (%)'])
     pd.set_option('precision', 2)
     params_size = 0
@@ -146,15 +154,17 @@ def masks_sparsity_summary(model, scheduler, param_dims=[2, 4]):
                 _density = distiller.density(mask)
             params_size += torch.numel(param)
             sparse_params_size += param.numel() * _density
-            df.loc[len(df.index)] = ([name, (1-_density)*100])
+            df.loc[len(df.index)] = ([name, (1 - _density) * 100])
 
     assert params_size != 0
-    total_sparsity = (1 - sparse_params_size/params_size)*100
+    total_sparsity = (1 - sparse_params_size / params_size) * 100
     df.loc[len(df.index)] = (['Total sparsity:', total_sparsity])
     return df
 
 
-def masks_sparsity_tbl_summary(model, scheduler, param_dims=[2, 4]):
+def masks_sparsity_tbl_summary(model, scheduler, param_dims=None):
+    if param_dims is None:
+        param_dims = [2, 4]
     df = masks_sparsity_summary(model, scheduler, param_dims=param_dims)
     return tabulate(df, headers='keys', tablefmt='psql', floatfmt=".5f")
 
@@ -171,7 +181,7 @@ def conv_visitor(self, input, output, df, model, memo):
     # Bias is ignored
     macs = (distiller.volume(output) *
             (self.in_channels / self.groups * self.kernel_size[0] * self.kernel_size[1]))
-    attrs = 'k=' + '('+(', ').join(['%d' % v for v in self.kernel_size])+')'
+    attrs = 'k=' + '(' + ', '.join(['%d' % v for v in self.kernel_size]) + ')'
     module_visitor(self, input, output, df, model, weights_vol, macs, attrs)
 
 
@@ -200,13 +210,14 @@ def module_visitor(self, input, output, df, model, weights_vol, macs, attrs=None
 
 def model_performance_summary(model, dummy_input, batch_size=1):
     """Collect performance data"""
+
     def install_perf_collector(m):
         if isinstance(m, torch.nn.Conv2d):
             hook_handles.append(m.register_forward_hook(
-                                    partial(conv_visitor, df=df, model=model, memo=memo)))
+                partial(conv_visitor, df=df, model=model, memo=memo)))
         elif isinstance(m, torch.nn.Linear):
             hook_handles.append(m.register_forward_hook(
-                                    partial(fc_visitor, df=df, model=model, memo=memo)))
+                partial(fc_visitor, df=df, model=model, memo=memo)))
 
     df = pd.DataFrame(columns=['Name', 'Type', 'Attrs', 'IFM', 'IFM volume',
                                'OFM', 'OFM volume', 'Weights volume', 'MACs'])
@@ -242,6 +253,7 @@ def attributes_summary(sgraph, ignore_attrs):
     Output:
         A Pandas dataframe
     """
+
     def pretty_val(val):
         if type(val) == int:
             return format(val, ",d")
@@ -287,6 +299,7 @@ def connectivity_summary_verbose(sgraph):
     Args:
         sgraph: a SummaryGraph instance
     """
+
     def format_list(l):
         ret = ''
         for i in l: ret += str(i) + '\n'
@@ -371,7 +384,7 @@ def create_png(sgraph, display_param_nodes=False, rankdir='TB', styles=None):
         if op['type'] == 'Conv':
             return ["sh={}".format(distiller.size2str(op['attrs']['kernel_shape'])),
                     "g={}".format(str(op['attrs']['group']))]
-        return ''   
+        return ''
 
     op_nodes = [op['name'] for op in sgraph.ops.values()]
     data_nodes = []

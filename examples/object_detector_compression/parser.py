@@ -38,18 +38,23 @@ def get_parser():
     parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', help='print frequency (default: 10)')
 
     optimizer_args = parser.add_argument_group('Optimizer arguments')
-    optimizer_args.add_argument('--lr', '--learning-rate', default=0.1, type=float, metavar='LR', help='initial learning rate')
+    optimizer_args.add_argument('--lr', '--learning-rate', default=1e-3, type=float, metavar='LR', help='initial learning rate')
+    optimizer_args.add_argument('--base_net_lr', default=None, type=float, help='initial learning rate for base net.')
+    optimizer_args.add_argument('--extra_layers_lr', default=None, type=float, help='initial learning rate for the layers not in base net and prediction heads.')
     optimizer_args.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
     optimizer_args.add_argument('--weight-decay', '--wd', default=1e-4, type=float, metavar='W', help='weight decay (default: 1e-4)')
 
     load_checkpoint_group = parser.add_argument_group('Resuming arguments')
     load_checkpoint_group_exc = load_checkpoint_group.add_mutually_exclusive_group()
-    # TODO(barrh): args.deprecated_resume is deprecated since v0.3.1
-    load_checkpoint_group_exc.add_argument('--resume', dest='deprecated_resume', default='', type=str, metavar='PATH', help=argparse.SUPPRESS)
     load_checkpoint_group_exc.add_argument('--resume-from', dest='resumed_checkpoint_path', default='', type=str, metavar='PATH', help='path to latest checkpoint. Use to resume paused training session.')
+    load_checkpoint_group_exc.add_argument('--load-base-net', dest='load_base_net', default='', type=str, metavar='PATH', help='path to pretrained base net.')
     load_checkpoint_group_exc.add_argument('--exp-load-weights-from', dest='load_model_path', default='', type=str, metavar='PATH', help='path to checkpoint to load weights from (excluding other fields) (experimental)')
     load_checkpoint_group.add_argument('--pretrained', dest='pretrained', action='store_true', help='use pre-trained model')
     load_checkpoint_group.add_argument('--reset-optimizer', action='store_true', help='Flag to override optimizer if resumed from checkpoint. This will reset epochs count.')
+
+    parser.add_argument("--calculate-map", dest='calculate_map', action='store_true', default=False)
+    parser.add_argument("--use_2007_metric", action='store_true', default=True)
+    parser.add_argument("--iou_threshold", type=float, default=0.5, help="The threshold of Intersection over Union.")
 
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on test set')
@@ -105,10 +110,6 @@ def get_parser():
                         help='Portion of test dataset to be used in each epoch')
     parser.add_argument('--confusion', dest='display_confusion', default=False, action='store_true',
                         help='Display the confusion matrix')
-    parser.add_argument('--earlyexit_lossweights', type=float, nargs='*', dest='earlyexit_lossweights', default=None,
-                        help='List of loss weights for early exits (e.g. --earlyexit_lossweights 0.1 0.3)')
-    parser.add_argument('--earlyexit_thresholds', type=float, nargs='*', dest='earlyexit_thresholds', default=None,
-                        help='List of EarlyExit thresholds (e.g. --earlyexit_thresholds 1.2 0.9)')
     parser.add_argument('--num-best-scores', dest='num_best_scores', default=1, type=int,
                         help='number of best scores to track and report (default: 1)')
     parser.add_argument('--load-serialized', dest='load_serialized', action='store_true', default=False,
@@ -116,7 +117,6 @@ def get_parser():
     parser.add_argument('--thinnify', dest='thinnify', action='store_true', default=False,
                         help='physically remove zero-filters and create a smaller model')
 
-    distiller.knowledge_distillation.add_distillation_args(parser, models.ALL_MODEL_NAMES, True)
     distiller.quantization.add_post_train_quant_args(parser)
     distiller.pruning.greedy_filter_pruning.add_greedy_pruner_args(parser)
     adc.automl_args.add_automl_args(parser)

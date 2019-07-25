@@ -59,10 +59,7 @@ class ResNetEarlyExit(models.ResNet):
         x = self.fc(x)
 
         # return a list of probabilities
-        output = []
-        output.append(exit0)
-        output.append(exit1)
-        output.append(x)
+        output = [exit0, exit1, x]
         return output
 
 

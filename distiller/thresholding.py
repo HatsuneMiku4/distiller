@@ -39,6 +39,7 @@ class GroupThresholdMixin(object):
 
     TODO: this does not need to be a mixin - it should be made a simple function.  We keep this until we refactor
     """
+
     def group_threshold_mask(self, param, group_type, threshold, threshold_criteria):
         ret = group_threshold_mask(param, group_type, threshold, threshold_criteria)
         if isinstance(ret, tuple):

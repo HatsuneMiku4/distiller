@@ -20,19 +20,21 @@ This implements the scheduling of the compression policies.
 """
 import contextlib
 import logging
+
 import torch
-from .quantization.quantizer import FP_BKP_PREFIX
+
 from .policy import PolicyLoss, LossComponent
+from .quantization.quantizer import FP_BKP_PREFIX
 from .utils import model_device, normalize_module_name
+
 msglogger = logging.getLogger()
-import distiller
 
 
 class ParameterMasker(object):
     def __init__(self, param_name):
         msglogger.debug('Created masker for parameter {0}'.format(param_name))
-        self.mask = None                # Mask lazily initialized by pruners
-        self.param_name = param_name    # For debug/logging purposes
+        self.mask = None  # Mask lazily initialized by pruners
+        self.param_name = param_name  # For debug/logging purposes
         self.is_regularization_mask = False
         self.use_double_copies = False
         self.mask_on_forward_only = False
@@ -63,9 +65,9 @@ class ParameterMasker(object):
         if not self.use_double_copies or self.unmasked_copy is None:
             msglogger.debug('Parameter {0} does not maintain double copies'.format(self.param_name))
             return
-        #msglogger.info('Parameter {} before {}'.format(self.param_name, distiller.sparsity(parameter)))
+        # msglogger.info('Parameter {} before {}'.format(self.param_name, distiller.sparsity(parameter)))
         parameter.data.copy_(self.unmasked_copy)
-        #msglogger.info('Parameter {} after {}'.format(self.param_name, distiller.sparsity(parameter)))
+        # msglogger.info('Parameter {} after {}'.format(self.param_name, distiller.sparsity(parameter)))
         self.unmasked_copy = None
 
 
@@ -82,6 +84,7 @@ class CompressionScheduler(object):
     """Responsible for scheduling pruning and masking parameters.
 
     """
+
     def __init__(self, model, device=torch.device("cuda")):
         self.model = model
         self.device = device

@@ -78,9 +78,9 @@ class PythonLogger(DataLogger):
             log = 'Test: [{:5d}/{:5d}]    '.format(completed, int(total))
         for name, val in stats_dict.items():
             if isinstance(val, int):
-                log = log + '{name} {val}    '.format(name=name, val=distiller.pretty_int(val))
+                log += '{name} {val}    '.format(name=name, val=distiller.pretty_int(val))
             else:
-                log = log + '{name} {val:.6f}    '.format(name=name, val=val)
+                log += '{name} {val:.6f}    '.format(name=name, val=val)
         self.pylogger.info(log)
 
     def log_activation_statsitic(self, phase, stat_name, activation_stats, epoch):
@@ -132,8 +132,8 @@ class TensorBoardLogger(DataLogger):
         print('> tensorboard --logdir=\'./logs\'\n')
 
         # Hard-code these preferences for now
-        self.log_gradients = False      # True
-        self.logged_params = ['weight'] # ['weight', 'bias']
+        self.log_gradients = False       # True
+        self.logged_params = ['weight']  # ['weight', 'bias']
 
     def log_training_progress(self, stats_dict, epoch, completed, total, freq):
         def total_steps(total, epoch, completed):

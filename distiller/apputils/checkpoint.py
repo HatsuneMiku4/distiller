@@ -20,15 +20,18 @@ Adding the schedule information in the model checkpoint is helpful in resuming
 a pruning session, or for querying the pruning schedule of a sparse model.
 """
 
+import logging
 import os
 import shutil
 from errno import ENOENT
-import logging
 from numbers import Number
-from tabulate import tabulate
+
 import torch
+from tabulate import tabulate
+
 import distiller
 from distiller.utils import normalize_module_name
+
 msglogger = logging.getLogger()
 
 
@@ -62,10 +65,11 @@ def save_checkpoint(epoch, arch, model, optimizer=None, scheduler=None,
     filename_best = 'best.pth.tar' if name is None else name + '_best.pth.tar'
     fullpath_best = os.path.join(dir, filename_best)
 
-    checkpoint = {}
-    checkpoint['epoch'] = epoch
-    checkpoint['arch'] = arch
-    checkpoint['state_dict'] = model.state_dict()
+    checkpoint = {
+        'epoch': epoch,
+        'arch': arch,
+        'state_dict': model.state_dict(),
+    }
     if optimizer is not None:
         checkpoint['optimizer_state_dict'] = optimizer.state_dict()
         checkpoint['optimizer_type'] = type(optimizer)
@@ -101,7 +105,7 @@ def get_contents_table(d):
     return tabulate(contents, headers=["Key", "Type", "Value"], tablefmt="psql")
 
 
-def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *, 
+def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *,
                     lean_checkpoint=False, strict=False):
     """Load a pytorch training checkpoint.
 
@@ -164,7 +168,7 @@ def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *,
         quantizer.prepare_model()
 
     if normalize_dataparallel_keys:
-            checkpoint['state_dict'] = {normalize_module_name(k): v for k, v in checkpoint['state_dict'].items()}
+        checkpoint['state_dict'] = {normalize_module_name(k): v for k, v in checkpoint['state_dict'].items()}
     anomalous_keys = model.load_state_dict(checkpoint['state_dict'], strict)
     if anomalous_keys:
         # This is pytorch 1.1+
@@ -173,13 +177,13 @@ def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *,
             msglogger.warning("Warning: the loaded checkpoint (%s) contains %d unexpected state keys" % (chkpt_file, len(unexpected_keys)))
         if missing_keys:
             raise ValueError("The loaded checkpoint (%s) is missing %d state keys" % (chkpt_file, len(missing_keys)))
-            
+
     if model_device is not None:
         model.to(model_device)
 
     if lean_checkpoint:
         msglogger.info("=> loaded 'state_dict' from checkpoint '{}'".format(str(chkpt_file)))
-        return (model, None, None, 0)
+        return model, None, None, 0
 
     def _load_optimizer(cls, src_state_dict, model):
         """Initiate optimizer with model parameters and load src_state_dict"""
@@ -190,8 +194,7 @@ def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *,
         return dest_optimizer
 
     try:
-        optimizer = _load_optimizer(checkpoint['optimizer_type'],
-            checkpoint['optimizer_state_dict'], model)
+        optimizer = _load_optimizer(checkpoint['optimizer_type'], checkpoint['optimizer_state_dict'], model)
     except KeyError:
         # Older checkpoints do support optimizer loading: They either had an 'optimizer' field 
         # (different name) which was not used during the load, or they didn't even checkpoint
@@ -202,11 +205,11 @@ def load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *,
         msglogger.info('Optimizer of type {type} was loaded from checkpoint'.format(
             type=type(optimizer)))
         msglogger.info('Optimizer Args: {}'.format(
-            dict((k,v) for k,v in optimizer.state_dict()['param_groups'][0].items()
-                            if k != 'params')))
+            dict((k, v) for k, v in optimizer.state_dict()['param_groups'][0].items()
+                 if k != 'params')))
     else:
         msglogger.warning('Optimizer could not be loaded from checkpoint.')
 
     msglogger.info("=> loaded checkpoint '{f}' (epoch {e})".format(f=str(chkpt_file),
                                                                    e=checkpoint_epoch))
-    return (model, compression_scheduler, optimizer, start_epoch)
+    return model, compression_scheduler, optimizer, start_epoch

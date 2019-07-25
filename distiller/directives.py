@@ -20,20 +20,19 @@ Scheduling directives are instructions (directives) that the scheduler can
 execute as part of scheduling pruning activities.
 """
 from __future__ import division
-import torch
-import numpy as np
-from collections import defaultdict
-import logging
-msglogger = logging.getLogger()
 
-from torchnet.meter import AverageValueMeter
-from distiller.utils import sparsity, density
+import logging
+
+import torch
+
+msglogger = logging.getLogger()
 
 
 class FreezeTraining(object):
     def __init__(self, name):
         print("------FreezeTraining--------")
         self.name = name
+
 
 def freeze_training(model, which_params, freeze):
     """This function will freeze/defrost training for certain layers.
@@ -80,7 +79,7 @@ def adjust_dropout(module, new_probabilty):
                         torch.nn.Dropout2d,
                         torch.nn.Dropout3d,
                         torch.nn.AlphaDropout]:
-        msglogger.info("Adjusting dropout probability")# for {}".format(str(module)))
+        msglogger.info("Adjusting dropout probability")  # for {}".format(str(module)))
         module.p = new_probabilty
     else:
         for child in module.children():

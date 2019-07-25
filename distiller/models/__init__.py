@@ -16,16 +16,17 @@
 
 """This package contains ImageNet and CIFAR image classification models for pytorch"""
 
+import logging
+
+import pretrainedmodels
 import torch
 import torchvision.models as torch_models
-from . import cifar10 as cifar10_models
-from . import mnist as mnist_models
-from . import imagenet as imagenet_extra_models
-import pretrainedmodels
 
 from distiller.utils import set_model_input_shape_attr
+from . import cifar10 as cifar10_models
+from . import imagenet as imagenet_extra_models
+from . import mnist as mnist_models
 
-import logging
 msglogger = logging.getLogger()
 
 # ResNet special treatment: we have our own version of ResNet, so we need to over-ride
@@ -49,7 +50,7 @@ MNIST_MODEL_NAMES = sorted(name for name in mnist_models.__dict__
                            and callable(mnist_models.__dict__[name]))
 
 ALL_MODEL_NAMES = sorted(map(lambda s: s.lower(),
-                            set(IMAGENET_MODEL_NAMES + CIFAR10_MODEL_NAMES + MNIST_MODEL_NAMES)))
+                             set(IMAGENET_MODEL_NAMES + CIFAR10_MODEL_NAMES + MNIST_MODEL_NAMES)))
 
 
 def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
@@ -106,8 +107,8 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     else:
         raise ValueError('Could not recognize dataset {}'.format(dataset))
 
-    msglogger.info("=> creating a %s%s model with the %s dataset" % ('pretrained ' if pretrained else '', 
-                                                                     arch, dataset))
+    msglogger.info("=> creating a %s%s model with the %s dataset" % (
+        'pretrained ' if pretrained else '', arch, dataset))
     if torch.cuda.is_available() and device_ids != -1:
         device = 'cuda'
         if (arch.startswith('alexnet') or arch.startswith('vgg')) and parallel:

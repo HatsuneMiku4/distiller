@@ -1,5 +1,5 @@
-import torch
 import torch.nn as nn
+
 from distiller.modules import *
 
 
@@ -8,20 +8,16 @@ class RNNModel(nn.Module):
 
     def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False):
         super(RNNModel, self).__init__()
-        self.ntoken = ntoken
-        self.ninp = ninp
-        self.nhid = nhid
-        self.nlayers = nlayers
+        self.ntoken, self.ninp, self.nhid, self.nlayers = ntoken, ninp, nhid, nlayers
         self.tie_weights = tie_weights
         self.drop = nn.Dropout(dropout)
         self.encoder = nn.Embedding(ntoken, ninp)
+
         if rnn_type in ['LSTM', 'GRU']:
             self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
         else:
-            try:
-                nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
-            except KeyError:
-                raise ValueError( """An invalid option for `--model` was supplied,
+            try: nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
+            except KeyError: raise ValueError("""An invalid option for `--model` was supplied,
                                  options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
             self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity, dropout=dropout)
 
@@ -34,8 +30,7 @@ class RNNModel(nn.Module):
         # "Tying Word Vectors and Word Classifiers: A Loss Framework for Language Modeling" (Inan et al. 2016)
         # https://arxiv.org/abs/1611.01462
         if tie_weights:
-            if nhid != ninp:
-                raise ValueError('When using the tied flag, nhid must be equal to emsize')
+            if nhid != ninp: raise ValueError('When using the tied flag, nhid must be equal to emsize')
             self.decoder.weight = self.encoder.weight
 
         self.init_weights()
@@ -55,7 +50,7 @@ class RNNModel(nn.Module):
         output, hidden = self.rnn(emb, hidden)
 
         output = self.drop(output)
-        decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
+        decoded = self.decoder(output.view(output.size(0) * output.size(1), output.size(2)))
         return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
 
     def init_hidden(self, bsz):
@@ -69,19 +64,16 @@ class RNNModel(nn.Module):
 
 class DistillerRNNModel(nn.Module):
     """This is the distiller version of RNNModel, which uses DistillerLSTM instead of nn.LSTM."""
+
     def __init__(self, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False):
         super(DistillerRNNModel, self).__init__()
-        self.ntoken = ntoken
-        self.ninp = ninp
-        self.nhid = nhid
-        self.nlayers = nlayers
+        self.ntoken, self.ninp, self.nhid, self.nlayers = ntoken, ninp, nhid, nlayers
         self.encoder = nn.Embedding(ntoken, ninp)
         self.rnn = DistillerLSTM(ninp, nhid, nlayers, dropout=dropout)
         self.decoder = nn.Linear(nhid, ntoken)
         self.init_weights()
         if tie_weights:
-            if nhid != ninp:
-                raise ValueError('When using the tied flag, nhid must be equal to emsize')
+            if nhid != ninp: raise ValueError('When using the tied flag, nhid must be equal to emsize')
             self.decoder.weight = self.encoder.weight
 
     def forward(self, x, h):

@@ -14,19 +14,22 @@
 # limitations under the License.
 #
 
-from collections import OrderedDict
+import logging
+
 import torch.nn as nn
 
-from .quantizer import Quantizer
 from .q_utils import *
-import logging
+from .quantizer import Quantizer
+
 msglogger = logging.getLogger()
+
 
 ###
 # Clipping-based linear quantization (e.g. DoReFa, WRPN)
 ###
 
 
+# noinspection PyMethodOverriding
 class LearnedClippedLinearQuantizeSTE(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, clip_val, num_bits, dequantize, inplace):
@@ -103,6 +106,7 @@ class WRPNQuantizer(Quantizer):
         1. This class does not take care of layer widening as described in the paper
         2. The paper defines special handling for 1-bit weights which isn't supported here yet
     """
+
     def __init__(self, model, optimizer,
                  bits_activations=32, bits_weights=32, bits_bias=None,
                  overrides=None):
@@ -126,6 +130,7 @@ class WRPNQuantizer(Quantizer):
 
         self.replacement_factory[nn.ReLU] = relu_replace_fn
 
+
 def dorefa_quantize_param(param_fp, param_meta):
     if param_meta.num_bits == 1:
         out = DorefaParamsBinarizationSTE.apply(param_fp)
@@ -137,6 +142,8 @@ def dorefa_quantize_param(param_fp, param_meta):
         out = 2 * out - 1
     return out
 
+
+# noinspection PyMethodOverriding
 class DorefaParamsBinarizationSTE(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, inplace=False):
@@ -145,10 +152,11 @@ class DorefaParamsBinarizationSTE(torch.autograd.Function):
         E = input.abs().mean()
         output = torch.where(input == 0, torch.ones_like(input), torch.sign(input)) * E
         return output
-    
+
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output, None
+
 
 class DorefaQuantizer(Quantizer):
     """
@@ -159,6 +167,7 @@ class DorefaQuantizer(Quantizer):
     Notes:
         1. Gradients quantization not supported yet
     """
+
     def __init__(self, model, optimizer,
                  bits_activations=32, bits_weights=32, bits_bias=None,
                  overrides=None):
@@ -189,6 +198,7 @@ class PACTQuantizer(Quantizer):
         act_clip_decay (float): L2 penalty applied to the clipping values, referred to as "lambda_alpha" in the paper.
             If None then the optimizer's default weight decay value is used (default: None)
     """
+
     def __init__(self, model, optimizer,
                  bits_activations=32, bits_weights=32, bits_bias=None,
                  overrides=None, act_clip_init_val=8.0, act_clip_decay=None):

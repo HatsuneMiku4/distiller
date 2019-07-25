@@ -17,34 +17,31 @@
 import torch
 
 
+# <editor-fold desc=">>> linear_quantization_params">
 def _prep_saturation_val_tensor(sat_val):
     is_scalar = not isinstance(sat_val, torch.Tensor)
     out = torch.tensor(sat_val) if is_scalar else sat_val.clone().detach()
-    if not out.is_floating_point():
+    if not out.is_floating_point():  # FP
         out = out.to(torch.float32)
-    if out.dim() == 0:
+    if out.dim() == 0:               # at least 1-dim
         out = out.unsqueeze(0)
     return is_scalar, out
 
 
 def symmetric_linear_quantization_params(num_bits, saturation_val):
     is_scalar, sat_val = _prep_saturation_val_tensor(saturation_val)
+    if any(sat_val < 0): raise ValueError('Saturation value must be >= 0')
 
-    if any(sat_val < 0):
-        raise ValueError('Saturation value must be >= 0')
-
-    # Leave one bit for sign
-    n = 2 ** (num_bits - 1) - 1
+    n = 2 ** (num_bits - 1) - 1  # Leave one bit for sign
 
     # If float values are all 0, we just want the quantized values to be 0 as well. So overriding the saturation
     # value to 'n', so the scale becomes 1
     sat_val[sat_val == 0] = n
-    scale = n / sat_val
-    zero_point = torch.zeros_like(scale)
+    scale = n / sat_val  # n: INT_MAX, sat_val: FP_MAX
+    zero_point = torch.zeros_like(scale)  # symmetric
 
-    if is_scalar:
-        # If input was scalar, return scalars
-        return scale.item(), zero_point.item()
+    # If input was scalar, return scalars
+    if is_scalar:  return scale.item(), zero_point.item()
     return scale, zero_point
 
 
@@ -54,10 +51,8 @@ def asymmetric_linear_quantization_params(num_bits, saturation_min, saturation_m
     scalar_max, sat_max = _prep_saturation_val_tensor(saturation_max)
     is_scalar = scalar_min and scalar_max
 
-    if scalar_max and not scalar_min:
-        sat_max = sat_max.to(sat_min.device)
-    elif scalar_min and not scalar_max:
-        sat_min = sat_min.to(sat_max.device)
+    if scalar_max and not scalar_min:   sat_max = sat_max.to(sat_min.device)
+    elif scalar_min and not scalar_max: sat_min = sat_min.to(sat_max.device)
 
     if any(sat_min > sat_max):
         raise ValueError('saturation_min must be smaller than saturation_max')
@@ -75,13 +70,13 @@ def asymmetric_linear_quantization_params(num_bits, saturation_min, saturation_m
 
     scale = n / diff
     zero_point = scale * sat_min
-    if integral_zero_point:
-        zero_point = zero_point.round()
-    if signed:
-        zero_point += 2 ** (num_bits - 1)
-    if is_scalar:
-        return scale.item(), zero_point.item()
+
+    if integral_zero_point: zero_point = zero_point.round()
+    if signed:              zero_point += 2 ** (num_bits - 1)  # TODO: ?
+
+    if is_scalar: return scale.item(), zero_point.item()
     return scale, zero_point
+# </editor-fold>
 
 
 def clamp(input, min, max, inplace=False):
@@ -153,10 +148,10 @@ def get_tensor_mean_n_stds_max_abs(t, dim=None, n_stds=1):
     return torch.max(min_val.abs_(), max_val.abs_())
 
 
+# <editor-fold desc=">>> scale_approximation">
 def get_scale_approximation_shift_bits(fp32_scale, mult_bits, limit=False):
     shift_bits = torch.log2((2 ** mult_bits - 1) / fp32_scale).floor()
-    if limit:
-        shift_bits = min(mult_bits, shift_bits)
+    if limit: shift_bits = min(mult_bits, shift_bits)
     return shift_bits
 
 
@@ -173,6 +168,7 @@ def get_scale_approximation_params(fp32_scale, mult_bits, limit=False):
 def approx_scale_as_mult_and_shift(fp32_scale, mult_bits, limit=False):
     multiplier, shift_bits = get_scale_approximation_params(fp32_scale, mult_bits, limit=limit)
     return multiplier / (2 ** shift_bits)
+# </editor-fold>
 
 
 def get_quantized_range(num_bits, signed=True):
@@ -183,15 +179,15 @@ def get_quantized_range(num_bits, signed=True):
 
 
 class LinearQuantizeSTE(torch.autograd.Function):
+    # noinspection PyMethodOverriding
     @staticmethod
     def forward(ctx, input, scale, zero_point, dequantize, inplace):
-        if inplace:
-            ctx.mark_dirty(input)
+        if inplace: ctx.mark_dirty(input)
         output = linear_quantize(input, scale, zero_point, inplace)
-        if dequantize:
-            output = linear_dequantize(output, scale, zero_point, inplace)
+        if dequantize: output = linear_dequantize(output, scale, zero_point, inplace)
         return output
 
+    # noinspection PyMethodOverriding
     @staticmethod
     def backward(ctx, grad_output):
         # Straight-through estimator

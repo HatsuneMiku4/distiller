@@ -51,31 +51,31 @@ models, or with the provided sample models:
 - MobileNet for ImageNet: https://github.com/marvis/pytorch-mobilenet
 """
 
-import math
-import time
-import os
-import traceback
 import logging
-from collections import OrderedDict
-from functools import partial
+import math
 import numpy as np
+import operator
+import os
+import parser
+import time
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
 import torchnet.meter as tnt
+import traceback
+from collections import OrderedDict
+from functools import partial
+
 import distiller
 import distiller.apputils as apputils
 import distiller.model_summaries as model_summaries
-from distiller.data_loggers import *
 import distiller.quantization as quantization
 import examples.automated_deep_compression as adc
+from distiller.data_loggers import *
 from distiller.models import ALL_MODEL_NAMES, create_model
-import parser
-import operator
-
 
 # Logger handle
 msglogger = None
@@ -105,7 +105,7 @@ def main():
     if args.evaluate:
         args.deterministic = True
     if args.deterministic:
-        distiller.set_deterministic(args.seed) # For experiment reproducability
+        distiller.set_deterministic(args.seed)  # For experiment reproducability
     else:
         if args.seed is not None:
             distiller.set_seed(args.seed)
@@ -186,8 +186,9 @@ def main():
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     if optimizer is None:
-        optimizer = torch.optim.SGD(model.parameters(),
-            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
         msglogger.info('Optimizer Type: %s', type(optimizer))
         msglogger.info('Optimizer Args: %s', optimizer.defaults)
 
@@ -203,8 +204,8 @@ def main():
         return
 
     if args.export_onnx is not None:
-        return distiller.export_img_classifier_to_onnx(model,
-            os.path.join(msglogger.logdir, args.export_onnx),
+        return distiller.export_img_classifier_to_onnx(
+            model, os.path.join(msglogger.logdir, args.export_onnx),
             args.dataset, add_softmax=True, verbose=False)
 
     if args.qe_calibration:
@@ -227,21 +228,22 @@ def main():
         return sensitivity_analysis(model, criterion, test_loader, pylogger, args, sensitivities)
 
     if args.evaluate:
-        return evaluate_model(model, criterion, test_loader, pylogger, activations_collectors, args,
-                              compression_scheduler)
+        return evaluate_model(model, criterion, test_loader, pylogger, activations_collectors, args, compression_scheduler)
 
     if args.compress:
         # The main use-case for this sample application is CNN compression. Compression
         # requires a compression schedule configuration file in YAML.
-        compression_scheduler = distiller.file_config(model, optimizer, args.compress, compression_scheduler,
-            (start_epoch-1) if args.resumed_checkpoint_path else None)
+        compression_scheduler = distiller.file_config(
+            model, optimizer, args.compress, compression_scheduler,
+            (start_epoch - 1) if args.resumed_checkpoint_path else None
+        )
         # Model is re-transferred to GPU in case parameters were added (e.g. PACTQuantizer)
         model.to(args.device)
     elif compression_scheduler is None:
         compression_scheduler = distiller.CompressionScheduler(model)
 
     if args.thinnify:
-        #zeros_mask_dict = distiller.create_model_masks_dict(model)
+        # zeros_mask_dict = distiller.create_model_masks_dict(model)
         assert args.resumed_checkpoint_path is not None, \
             "You must use --resume-from to provide a checkpoint file to thinnify"
         distiller.remove_filters(model, compression_scheduler.zeros_mask_dict, args.arch, args.dataset, optimizer=None)
@@ -271,14 +273,14 @@ def main():
     if start_epoch >= ending_epoch:
         msglogger.error(
             'epoch count is too low, starting epoch is {} but total epochs set to {}'.format(
-            start_epoch, ending_epoch))
+                start_epoch, ending_epoch))
         raise ValueError('Epochs parameter is too low. Nothing to do.')
     for epoch in range(start_epoch, ending_epoch):
         # This is the main training loop.
         msglogger.info('\n')
         if compression_scheduler:
             compression_scheduler.on_epoch_begin(epoch,
-                metrics=(vloss if (epoch != start_epoch) else 10**6))
+                                                 metrics=(vloss if (epoch != start_epoch) else 10 ** 6))
 
         # Train for one epoch
         with collectors_context(activations_collectors["train"]) as collectors:
@@ -297,12 +299,8 @@ def main():
                                                 collector=collectors["sparsity"])
             save_collectors_data(collectors, msglogger.logdir)
 
-        stats = ('Performance/Validation/',
-                 OrderedDict([('Loss', vloss),
-                              ('Top1', top1),
-                              ('Top5', top5)]))
-        distiller.log_training_progress(stats, None, epoch, steps_completed=0, total_steps=1, log_freq=1,
-                                        loggers=[tflogger])
+        stats = ('Performance/Validation/', OrderedDict([('Loss', vloss), ('Top1', top1), ('Top5', top5)]))
+        distiller.log_training_progress(stats, None, epoch, steps_completed=0, total_steps=1, log_freq=1, loggers=[tflogger])
 
         if compression_scheduler:
             compression_scheduler.on_epoch_end(epoch, optimizer)
@@ -338,7 +336,7 @@ def train(train_loader, model, criterion, optimizer, epoch,
     # So exiterrors is analogous to classerr for the non-Early Exit case
     if args.earlyexit_lossweights:
         args.exiterrors = []
-        for exitnum in range(args.num_exits):
+        for _ in range(args.num_exits):
             args.exiterrors.append(tnt.ClassErrorMeter(accuracy=True, topk=(1, 5)))
 
     total_samples = len(train_loader.sampler)
@@ -401,7 +399,7 @@ def train(train_loader, model, criterion, optimizer, epoch,
 
         # measure elapsed time
         batch_time.add(time.time() - end)
-        steps_completed = (train_step+1)
+        steps_completed = (train_step + 1)
 
         if steps_completed % args.print_freq == 0:
             # Log some statistics
@@ -463,7 +461,7 @@ def _validate(data_loader, model, criterion, loggers, args, epoch=-1):
         # for Early Exit, we have a list of errors and losses for each of the exits.
         args.exiterrors = []
         args.losses_exits = []
-        for exitnum in range(args.num_exits):
+        for _ in range(args.num_exits):
             args.exiterrors.append(tnt.ClassErrorMeter(accuracy=True, topk=(1, 5)))
             args.losses_exits.append(tnt.AverageValueMeter())
         args.exit_taken = [0] * args.num_exits
@@ -493,6 +491,7 @@ def _validate(data_loader, model, criterion, loggers, args, epoch=-1):
                 losses['objective_loss'].add(loss.item())
                 classerr.add(output.data, target)
                 if args.display_confusion:
+                    # noinspection PyUnboundLocalVariable
                     confusion.add(output.data, target)
             else:
                 earlyexit_validate_loss(output, target, criterion, args)
@@ -501,13 +500,13 @@ def _validate(data_loader, model, criterion, loggers, args, epoch=-1):
             batch_time.add(time.time() - end)
             end = time.time()
 
-            steps_completed = (validation_step+1)
+            steps_completed = (validation_step + 1)
             if steps_completed % args.print_freq == 0:
                 if not args.earlyexit_thresholds:
                     stats = ('',
-                            OrderedDict([('Loss', losses['objective_loss'].mean),
-                                         ('Top1', classerr.value(1)),
-                                         ('Top5', classerr.value(5))]))
+                             OrderedDict([('Loss', losses['objective_loss'].mean),
+                                          ('Top1', classerr.value(1)),
+                                          ('Top5', classerr.value(5))]))
                 else:
                     stats_dict = OrderedDict()
                     stats_dict['Test'] = validation_step
@@ -535,7 +534,7 @@ def _validate(data_loader, model, criterion, loggers, args, epoch=-1):
         return classerr.value(1), classerr.value(5), losses['objective_loss'].mean
     else:
         total_top1, total_top5, losses_exits_stats = earlyexit_validate_stats(args)
-        return total_top1, total_top5, losses_exits_stats[args.num_exits-1]
+        return total_top1, total_top5, losses_exits_stats[args.num_exits - 1]
 
 
 def update_training_scores_history(perf_scores_history, model, top1, top5, epoch, num_best_scores):
@@ -556,13 +555,13 @@ def update_training_scores_history(perf_scores_history, model, top1, top5, epoch
 def earlyexit_loss(output, target, criterion, args):
     loss = 0
     sum_lossweights = 0
-    for exitnum in range(args.num_exits-1):
+    for exitnum in range(args.num_exits - 1):
         loss += (args.earlyexit_lossweights[exitnum] * criterion(output[exitnum], target))
         sum_lossweights += args.earlyexit_lossweights[exitnum]
         args.exiterrors[exitnum].add(output[exitnum].data, target)
     # handle final exit
-    loss += (1.0 - sum_lossweights) * criterion(output[args.num_exits-1], target)
-    args.exiterrors[args.num_exits-1].add(output[args.num_exits-1].data, target)
+    loss += (1.0 - sum_lossweights) * criterion(output[args.num_exits - 1], target)
+    args.exiterrors[args.num_exits - 1].add(output[args.num_exits - 1].data, target)
     return loss
 
 
@@ -590,7 +589,7 @@ def earlyexit_validate_loss(output, target, criterion, args):
                                              torch.full([1], target[batch_index], dtype=torch.long))
                 args.exit_taken[exitnum] += 1
                 earlyexit_taken = True
-                break                    # since exit was taken, do not affect the stats of subsequent exits
+                break  # since exit was taken, do not affect the stats of subsequent exits
         # this sample does not exit early and therefore continues until final exit
         if not earlyexit_taken:
             exitnum = args.num_exits - 1
@@ -615,13 +614,14 @@ def earlyexit_validate_stats(args):
     for exitnum in range(args.num_exits):
         if args.exit_taken[exitnum]:
             msglogger.info("Percent Early Exit %d: %.3f", exitnum,
-                           (args.exit_taken[exitnum]*100.0) / sum_exit_stats)
+                           (args.exit_taken[exitnum] * 100.0) / sum_exit_stats)
     total_top1 = 0
     total_top5 = 0
     for exitnum in range(args.num_exits):
         total_top1 += (top1k_stats[exitnum] * (args.exit_taken[exitnum] / sum_exit_stats))
         total_top5 += (top5k_stats[exitnum] * (args.exit_taken[exitnum] / sum_exit_stats))
-        msglogger.info("Accuracy Stats for exit %d: top1 = %.3f, top5 = %.3f", exitnum, top1k_stats[exitnum], top5k_stats[exitnum])
+        msglogger.info("Accuracy Stats for exit %d: top1 = %.3f, top5 = %.3f", exitnum, top1k_stats[exitnum],
+                       top5k_stats[exitnum])
     msglogger.info("Totals for entire network with early exits: top1 = %.3f, top5 = %.3f", total_top1, total_top5)
     return total_top1, total_top5, losses_exits_stats
 
@@ -631,7 +631,8 @@ def evaluate_model(model, criterion, test_loader, loggers, activations_collector
     # the test dataset.
     # You can optionally quantize the model to 8-bit integer before evaluation.
     # For example:
-    # python3 compress_classifier.py --arch resnet20_cifar  ../data.cifar10 -p=50 --resume-from=checkpoint.pth.tar --evaluate
+    # python3 compress_classifier.py --arch resnet20_cifar
+    # ../data.cifar10 -p=50 --resume-from=checkpoint.pth.tar --evaluate
 
     if not isinstance(loggers, list):
         loggers = [loggers]
@@ -730,6 +731,7 @@ def load_data(args, fixed_subset=False):
 
 class missingdict(dict):
     """This is a little trick to prevent KeyError"""
+
     def __missing__(self, key):
         return None  # note, does *not* set self[key] - we don't want defaultdict's behavior
 
@@ -748,15 +750,15 @@ def create_activation_stats_collectors(model, *phases):
     WARNING! Enabling activation statsitics collection will significantly slow down training!
     """
     genCollectors = lambda: missingdict({
-        "sparsity":      SummaryActivationStatsCollector(model, "sparsity",
-                                                         lambda t: 100 * distiller.utils.sparsity(t)),
-        "l1_channels":   SummaryActivationStatsCollector(model, "l1_channels",
-                                                         distiller.utils.activation_channels_l1),
+        "sparsity": SummaryActivationStatsCollector(model, "sparsity",
+                                                    lambda t: 100 * distiller.utils.sparsity(t)),
+        "l1_channels": SummaryActivationStatsCollector(model, "l1_channels",
+                                                       distiller.utils.activation_channels_l1),
         "apoz_channels": SummaryActivationStatsCollector(model, "apoz_channels",
                                                          distiller.utils.activation_channels_apoz),
         "mean_channels": SummaryActivationStatsCollector(model, "mean_channels",
                                                          distiller.utils.activation_channels_means),
-        "records":       RecordsActivationStatsCollector(model, classes=[torch.nn.Conv2d])
+        "records": RecordsActivationStatsCollector(model, classes=[torch.nn.Conv2d])
     })
 
     return {k: (genCollectors() if k in phases else missingdict())

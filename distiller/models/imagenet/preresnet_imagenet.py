@@ -168,8 +168,7 @@ class PreactResNet(nn.Module):
         # because we take care of that (+ maxpool) after the initial conv layer
         preactivate_first = stride != 1
 
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, preactivate_first))
+        layers = [block(self.inplanes, planes, stride, downsample, preactivate_first)]
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))

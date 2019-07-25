@@ -62,6 +62,8 @@ def dict_config(model, optimizer, sched_dict, scheduler=None, resumed_epoch=None
         raise ValueError("\nError: Multiple Quantizers not supported")
     extensions = __factory('extensions', model, sched_dict)
 
+    policy_def = None
+
     try:
         lr_policies = []
         for policy_def in sched_dict['policies']:
@@ -109,13 +111,14 @@ def dict_config(model, optimizer, sched_dict, scheduler=None, resumed_epoch=None
 
             add_policy_to_scheduler(policy, policy_def, scheduler)
 
-        # Any changes to the optmizer caused by a quantizer have occured by now, so safe to create LR schedulers
+        # Any changes to the optmizer caused by a quantizer have occured by now,
+        # so safe to create LR schedulers
         lr_schedulers = __factory('lr_schedulers', model, sched_dict, optimizer=optimizer,
                                   last_epoch=(resumed_epoch if resumed_epoch is not None else -1))
         for policy_def in lr_policies:
             instance_name, args = __policy_params(policy_def, 'lr_scheduler')
-            assert instance_name in lr_schedulers, "LR-scheduler {} was not defined in the list of lr-schedulers".format(
-                instance_name)
+            assert instance_name in lr_schedulers, \
+                "LR-scheduler {} was not defined in the list of lr-schedulers".format(instance_name)
             lr_scheduler = lr_schedulers[instance_name]
             policy = distiller.LRPolicy(lr_scheduler)
             add_policy_to_scheduler(policy, policy_def, scheduler)
@@ -135,8 +138,8 @@ def add_policy_to_scheduler(policy, policy_def, scheduler):
         scheduler.add_policy(policy, epochs=policy_def['epochs'])
     else:
         scheduler.add_policy(policy, starting_epoch=policy_def['starting_epoch'],
-                            ending_epoch=policy_def['ending_epoch'],
-                            frequency=policy_def['frequency'])
+                             ending_epoch=policy_def['ending_epoch'],
+                              frequency=policy_def['frequency'])
 
 
 def file_config(model, optimizer, filename, scheduler=None, resumed_epoch=None):

@@ -14,24 +14,26 @@
 # limitations under the License.
 #
 
-import torch.nn as nn
 import argparse
-from enum import Enum
-from collections import OrderedDict
-from functools import reduce, partial
 import logging
 import os
+from collections import OrderedDict
+from enum import Enum
+from functools import reduce, partial
+
+import torch.nn as nn
 
 import distiller
-import distiller.utils
-from .quantizer import Quantizer
-from .q_utils import *
 import distiller.modules
+import distiller.utils
+from .q_utils import *
+from .quantizer import Quantizer
 
 msglogger = logging.getLogger()
 
 
 def _enum_to_str(enum_val):
+    # e.g. LinearQuantMode.SYMMETRIC -> SYMMETRIC
     return str(enum_val).split('.')[1]
 
 
@@ -41,13 +43,11 @@ class LinearQuantMode(Enum):
     ASYMMETRIC_SIGNED = 3
 
 
+# TODO: AVG/N_STD: computed dynamically
 class ClipMode(Enum):
-    # No clipping - absolute min/max values will be used
-    NONE = 0
-    # Clip value calculated by averaging over the max absolute values of samples within a batch
-    AVG = 1
-    # Clip value calculated as mean of tesnsor + N standard deviations. N should be specified separately
-    N_STD = 2
+    NONE = 0   # No clipping - absolute min/max values will be used
+    AVG = 1    # Clip value calculated by averaging over the max absolute values of samples within a batch
+    N_STD = 2  # Clip value calculated as mean of tesnsor + N standard deviations. N should be specified separately
 
 
 def _verify_enum_value(val, enum_cls):
@@ -100,7 +100,7 @@ def _get_quant_params_from_tensor(tensor, num_bits, mode, clip=ClipMode.NONE, pe
     if mode == LinearQuantMode.SYMMETRIC:
         sat_val = sat_fn(tensor, dim)
         scale, zp = symmetric_linear_quantization_params(num_bits, sat_val)
-    else:   # Asymmetric mode
+    else:  # Asymmetric mode
         sat_min, sat_max = sat_fn(tensor, dim)
         signed = mode == LinearQuantMode.ASYMMETRIC_SIGNED
         scale, zp = asymmetric_linear_quantization_params(num_bits, sat_min, sat_max, signed=signed)
@@ -120,18 +120,19 @@ def _get_quant_params_from_tensor(tensor, num_bits, mode, clip=ClipMode.NONE, pe
 def _get_quant_params_from_stats_dict(stats, num_bits, mode, clip=ClipMode.NONE, num_stds=None,
                                       scale_approx_mult_bits=None):
     if clip == ClipMode.N_STD:
-        if num_stds is None:
-            raise ValueError('Clip mode set to N_STD but \'num_stds\' parameter not provided')
-        if num_stds <= 0:
-            raise ValueError('n_stds must be > 0, got {}'.format(num_stds))
+        if num_stds is None: raise ValueError('Clip mode set to N_STD but \'num_stds\' parameter not provided')
+        if num_stds <= 0:    raise ValueError('n_stds must be > 0, got {}'.format(num_stds))
+
     prefix = 'avg_' if clip == ClipMode.AVG else ''
-    sat_min = torch.tensor(float(stats[prefix + 'min']))
+    sat_min = torch.tensor(float(stats[prefix + 'min']))  # avg_min / min
     sat_max = torch.tensor(float(stats[prefix + 'max']))
+
     if clip == ClipMode.N_STD:
         mean = torch.tensor(float(stats['mean']))
         std = torch.tensor(float(stats['std']))
-        sat_min = torch.max(sat_min, mean - num_stds * std)
+        sat_min = torch.max(sat_min, mean - num_stds * std)  # max(actual_min, avg_min)
         sat_max = torch.min(sat_max, mean + num_stds * std)
+
     if mode == LinearQuantMode.SYMMETRIC:
         scale, zp = symmetric_linear_quantization_params(num_bits, torch.max(sat_min.abs_(), sat_max.abs_()))
     else:
@@ -169,8 +170,8 @@ def add_post_train_quant_args(argparser):
                                          '("post-training quantization")')
     exc_group = group.add_mutually_exclusive_group()
     exc_group.add_argument('--quantize-eval', '--qe', action='store_true',
-                       help='Apply linear quantization to model before evaluation. Applicable only if '
-                            '--evaluate is also set')
+                           help='Apply linear quantization to model before evaluation. Applicable only if '
+                                '--evaluate is also set')
     exc_group.add_argument('--qe-calibration', type=distiller.utils.float_range_argparse_checker(exc_min=True),
                            metavar='PORTION_OF_TEST_SET',
                            help='Run the model in evaluation mode on the specified portion of the test dataset and '
@@ -241,13 +242,16 @@ class RangeLinearQuantWrapper(nn.Module):
         self._dequant_out = True
 
         signed = mode != LinearQuantMode.ASYMMETRIC_UNSIGNED
+        # e.g. (0, 2 ** num_bits - 1)
         self.acts_min_q_val, self.acts_max_q_val = get_quantized_range(num_bits_acts, signed=signed)
-        # The accumulator is always signed
+        # The accumulator is always signed  # TODO: why?
         self.accum_min_q_val, self.accum_max_q_val = get_quantized_range(num_bits_accum, signed=True)
 
         if activation_stats:
             self.preset_act_stats = True
             self.num_inputs = 0
+
+            # multiple inputs, one output
             for idx, stats in activation_stats['inputs'].items():
                 self.num_inputs += 1
                 scale, zp = _get_quant_params_from_stats_dict(stats, num_bits_acts, mode, clip_acts, clip_n_stds,
@@ -414,6 +418,7 @@ class RangeLinearQuantParamLayerWrapper(RangeLinearQuantWrapper):
         clip_n_stds (int): See RangeLinearQuantWrapper
         scale_approx_mult_bits (int): See RangeLinearQuantWrapper
     """
+
     def __init__(self, wrapped_module, num_bits_acts, num_bits_params, num_bits_accum=32,
                  mode=LinearQuantMode.SYMMETRIC, clip_acts=ClipMode.NONE, per_channel_wts=False, activation_stats=None,
                  clip_n_stds=None, scale_approx_mult_bits=None):
@@ -550,8 +555,8 @@ class RangeLinearQuantParamLayerWrapper(RangeLinearQuantWrapper):
         return tmpstr
 
 
-class NoStatsError(NotImplementedError):
-    pass
+# quantization of a non_param_layer is not supported
+class NoStatsError(NotImplementedError): ...
 
 
 class RangeLinearQuantConcatWrapper(RangeLinearQuantWrapper):
@@ -709,6 +714,7 @@ class FP16Wrapper(nn.Module):
         return_fp32 (:obj:`bool`, optional): Specifies whether the output needs
             to be converted back to fp32. Default: True.
     """
+
     def __init__(self, module: nn.Module, convert_input=True, return_fp32=True):
         super(FP16Wrapper, self).__init__()
         self.wrapped_module = module.half()
@@ -784,6 +790,7 @@ class PostTrainLinearQuantizer(Quantizer):
         If fp16 is set to True, all the layers (except those overriden in `overrides`) will be converted
         to half precision, regardless of bits_activations/parameters/accum.
     """
+
     def __init__(self, model, bits_activations=8, bits_parameters=8, bits_accum=32,
                  overrides=None, mode=LinearQuantMode.SYMMETRIC, clip_acts=ClipMode.NONE,
                  per_channel_wts=False, model_activation_stats=None, fp16=False, clip_n_stds=None,
@@ -792,18 +799,18 @@ class PostTrainLinearQuantizer(Quantizer):
                                                        bits_weights=bits_parameters, bits_bias=bits_accum,
                                                        overrides=overrides, train_with_fp_copy=False)
 
-        mode = verify_quant_mode(mode)
+        mode = verify_quant_mode(mode)  # str or Enum -> Enum
         clip_acts = verify_clip_mode(clip_acts)
         if clip_acts == ClipMode.N_STD and clip_n_stds is None:
             raise ValueError('clip_n_stds must not be None when clip_acts set to N_STD')
 
         if model_activation_stats is not None:
-            if isinstance(model_activation_stats, str):
+            if isinstance(model_activation_stats, str):  # path to activation stats YAML file
                 if not os.path.isfile(model_activation_stats):
                     raise ValueError("Model activation stats file not found at: " + model_activation_stats)
                 msglogger.info('Loading activation stats from: ' + model_activation_stats)
                 with open(model_activation_stats, 'r') as stream:
-                    model_activation_stats = distiller.utils.yaml_ordered_load(stream)
+                    model_activation_stats = distiller.utils.yaml_ordered_load(stream)  # YAML -> OrderedDict
             elif not isinstance(model_activation_stats, (dict, OrderedDict)):
                 raise TypeError('model_activation_stats must either be a string, a dict / OrderedDict or None')
 
@@ -811,18 +818,17 @@ class PostTrainLinearQuantizer(Quantizer):
                                          'params': {'bits_activations': bits_activations,
                                                     'bits_parameters': bits_parameters,
                                                     'bits_accum': bits_accum,
-                                                    'mode': str(mode).split('.')[1],
+                                                    'mode': _enum_to_str(mode),
                                                     'clip_acts': _enum_to_str(clip_acts),
                                                     'clip_n_stds': clip_n_stds,
-                                                    'per_channel_wts': per_channel_wts,
-                                                    'fp16': fp16,
-                                                    'scale_approx_mult_bits': scale_approx_mult_bits}}
+                                                    'per_channel_wts': per_channel_wts,  # bool
+                                                    'fp16': fp16,  # bool
+                                                    'scale_approx_mult_bits': scale_approx_mult_bits}}  # bool
 
         def replace_param_layer(module, name, qbits_map, per_channel_wts=per_channel_wts,
                                 mode=mode, fp16=fp16, scale_approx_mult_bits=scale_approx_mult_bits,
                                 clip_acts=clip_acts, clip_n_stds=clip_n_stds):
-            if fp16:
-                return FP16Wrapper(module)
+            if fp16: return FP16Wrapper(module)
             norm_name = distiller.utils.normalize_module_name(name)
             clip_acts = verify_clip_mode(clip_acts)
             return RangeLinearQuantParamLayerWrapper(module, qbits_map[name].acts, qbits_map[name].wts,
@@ -835,8 +841,7 @@ class PostTrainLinearQuantizer(Quantizer):
         def replace_non_param_layer(wrapper_type, module, name, qbits_map, fp16=fp16,
                                     scale_approx_mult_bits=scale_approx_mult_bits,
                                     clip_acts=clip_acts, clip_n_stds=clip_n_stds):
-            if fp16:
-                return FP16Wrapper(module)
+            if fp16: return FP16Wrapper(module)
             norm_name = distiller.utils.normalize_module_name(name)
             clip_acts = verify_clip_mode(clip_acts)
             try:
@@ -849,15 +854,14 @@ class PostTrainLinearQuantizer(Quantizer):
                 return module
 
         def replace_embedding(module, name, qbits_map, fp16=fp16):
-            if fp16:
-                return FP16Wrapper(module, convert_input=False)
+            if fp16: return FP16Wrapper(module, convert_input=False)
             norm_name = distiller.utils.normalize_module_name(name)
             return RangeLinearEmbeddingWrapper(module, qbits_map[name].wts, mode=mode,
                                                stats=self.model_activation_stats.get(norm_name, None))
 
         self.clip_acts = clip_acts
         self.clip_n_stds = clip_n_stds
-        self.model_activation_stats = model_activation_stats or {}
+        self.model_activation_stats = model_activation_stats or {}  # OrderedDict()?
         self.bits_accum = bits_accum
         self.mode = mode
 
@@ -878,9 +882,8 @@ class PostTrainLinearQuantizer(Quantizer):
         Returns an instance of PostTrainLinearQuantizer based on the set command-line arguments that are
         given by add_post_train_quant_args()
         """
-        if args.qe_config_file:
-            return distiller.config_component_from_file_by_class(model, args.qe_config_file,
-                                                                 'PostTrainLinearQuantizer')
+        if args.qe_config_file:  # override qe_xxx arguments
+            return distiller.config_component_from_file_by_class(model, args.qe_config_file, 'PostTrainLinearQuantizer')
         else:
             overrides = OrderedDict(
                 [(layer, OrderedDict([('clip_acts', 'NONE')]))
@@ -951,28 +954,24 @@ class FakeLinearQuantization(nn.Module):
             with torch.no_grad():
                 current_min, current_max = get_tensor_min_max(input)
             self.iter_count += 1
-            self.tracked_min_biased.data, self.tracked_min.data = update_ema(self.tracked_min_biased.data,
-                                                                             current_min, self.ema_decay,
-                                                                             self.iter_count)
-            self.tracked_max_biased.data, self.tracked_max.data = update_ema(self.tracked_max_biased.data,
-                                                                             current_max, self.ema_decay,
-                                                                             self.iter_count)
+            self.tracked_min_biased.data, self.tracked_min.data = update_ema(
+                self.tracked_min_biased.data, current_min, self.ema_decay, self.iter_count)
+            self.tracked_max_biased.data, self.tracked_max.data = update_ema(
+                self.tracked_max_biased.data, current_max, self.ema_decay, self.iter_count)
 
         if self.mode == LinearQuantMode.SYMMETRIC:
             max_abs = max(abs(self.tracked_min), abs(self.tracked_max))
             actual_min, actual_max = -max_abs, max_abs
             if self.training:
                 self.scale.data, self.zero_point.data = symmetric_linear_quantization_params(self.num_bits, max_abs)
-        else:
+        else:  # ASYMMETRIC
             actual_min, actual_max = self.tracked_min, self.tracked_max
             signed = self.mode == LinearQuantMode.ASYMMETRIC_SIGNED
             if self.training:
-                self.scale.data, self.zero_point.data = asymmetric_linear_quantization_params(self.num_bits,
-                                                                                              self.tracked_min,
-                                                                                              self.tracked_max,
-                                                                                              signed=signed)
+                self.scale.data, self.zero_point.data = asymmetric_linear_quantization_params(
+                    self.num_bits, self.tracked_min, self.tracked_max, signed=signed)
 
-        input = clamp(input, actual_min.item(), actual_max.item(), False)
+        input = clamp(input, actual_min.item(), actual_max.item(), inplace=False)
         input = LinearQuantizeSTE.apply(input, self.scale, self.zero_point, self.dequantize, False)
 
         return input
@@ -986,8 +985,9 @@ class FakeQuantizationWrapper(nn.Module):
     def __init__(self, wrapped_module, num_bits, quant_mode, ema_decay):
         super(FakeQuantizationWrapper, self).__init__()
         self.wrapped_module = wrapped_module
-        self.fake_q = FakeLinearQuantization(num_bits, quant_mode, ema_decay, dequantize=True,
-                                             inplace=getattr(wrapped_module, 'inplace', False))
+        self.fake_q = FakeLinearQuantization(
+            num_bits, quant_mode, ema_decay, dequantize=True,
+            inplace=getattr(wrapped_module, 'inplace', False))
 
     def forward(self, *input):
         res = self.wrapped_module(*input)

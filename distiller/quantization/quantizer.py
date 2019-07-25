@@ -14,21 +14,23 @@
 # limitations under the License.
 #
 
-from collections import namedtuple, OrderedDict, defaultdict
-import re
 import copy
 import logging
+import re
+import warnings
+from collections import namedtuple, OrderedDict, defaultdict
+from typing import Callable, Optional
+
 import torch
 import torch.nn as nn
+
 import distiller
-import warnings
-from typing import Callable, Optional
 
 msglogger = logging.getLogger()
 
-QBits = namedtuple('QBits', ['acts', 'wts', 'bias'])
+QBits = namedtuple('QBits', ['acts', 'wts', 'bias'])  # quantization bitwidth
 
-FP_BKP_PREFIX = 'float_'
+FP_BKP_PREFIX = 'float_'  # float-point backup prefix
 
 
 def has_bias(module):
@@ -36,13 +38,23 @@ def has_bias(module):
 
 
 def hack_float_backup_parameter(module, name, num_bits):
+    """
+    https://nervanasystems.github.io/distiller/design.html#quantization-aware-training
+
+    The existing ``torch.nn.Parameter``, e.g. ``weights``, is replaced by a ``torch.nn.Parameter`` named ``float_weight``.
+    To maintain the existing functionality of the module, we then register a ``buffer`` in the module with the original name - ``weights``.
+    During training, ``float_weight`` will be passed to ``param_quantization_fn`` and the result will be stored in ``weight``.
+    """
+
     try:
         data = dict(module.named_parameters())[name].data
     except KeyError:
         raise ValueError('Module has no Parameter named ' + name)
-    module.register_parameter(FP_BKP_PREFIX + name, nn.Parameter(data))
-    delattr(module, name)
-    module.register_buffer(name, torch.zeros_like(data))
+    module.register_parameter(FP_BKP_PREFIX + name, nn.Parameter(data))     # create a new parameter with prefix
+    delattr(module, name)                                                   # remove original parameter
+    module.register_buffer(name, torch.zeros_like(data))                    # store ``param_quantization_fn(fp32_weight)``
+
+    """ Add extra representation """
 
     first = False
     if not hasattr(module, 'repr_mod'):
@@ -57,6 +69,7 @@ def hack_float_backup_parameter(module, name, num_bits):
 
 
 class _ParamToQuant(object):
+    """ Represent a module parameter to be quantized """
     def __init__(self, module, module_name, fp_attr_name, q_attr_name, num_bits):
         self.module = module
         self.module_name = module_name
@@ -69,17 +82,17 @@ class _ParamToQuant(object):
 
 
 class Quantizer(object):
-    r"""
+    """
     Base class for quantizers.
 
     Args:
-        model (torch.nn.Module): The model to be quantized
-        optimizer (torch.optim.Optimizer): An optimizer instance, required in cases where the quantizer is going
+        model (``torch.nn.Module``): The model to be quantized
+        optimizer (``torch.optim.Optimizer``): An optimizer instance, required in cases where the quantizer is going
             to perform changes to existing model parameters and/or add new ones.
-            Specifically, when train_with_fp_copy is True, this cannot be None.
-        bits_activations/weights/bias (int): Default number of bits to use when quantizing each tensor type.
-            Value of None means do not quantize.
-        overrides (OrderedDict): Dictionary mapping regular expressions of layer name patterns to dictionary with
+            Specifically, when ``train_with_fp_copy`` is ``True``, this cannot be ``None``.
+        bits_activations/weights/bias (``int``): Default number of bits to use when quantizing each tensor type.
+            Value of ``None`` means do not quantize.
+        overrides (OrderedDict): Dictionary mapping *regular expressions* of layer name patterns to dictionary with
             overrides of default values.
             The keys in the overrides dictionary should be parameter names that the Quantizer accepts default values
             for in its init function.
@@ -92,15 +105,16 @@ class Quantizer(object):
             specific layers in that group, e.g. 'conv1'.
             The patterns are evaluated eagerly - the first match wins. Therefore, the more specific patterns must
             come before the broad patterns.
-        train_with_fp_copy (bool): If true, will modify layers with weights to keep both a quantized and
+        train_with_fp_copy (``bool``): If ``true``, will modify layers with weights to keep both a quantized and
             floating-point copy, such that the following flow occurs in each training iteration:
-            1. q_weights = quantize(fp_weights)
-            2. Forward through network using q_weights
+            1. ``q_weights = quantize(fp_weights)``
+            2. Forward through network using ``q_weights``
             3. In back-prop:
-                3.1 Gradients calculated with respect to q_weights
-                3.2 We also back-prop through the 'quantize' operation from step 1
-            4. Update fp_weights with gradients calculated in step 3.2
+                3.1 Gradients calculated with respect to ``q_weights``
+                3.2 We also back-prop through the 'quantize' operation (STE) from step 1
+            4. Update ``fp_weights`` with gradients calculated in step 3.2
     """
+
     def __init__(self, model, optimizer=None,
                  bits_activations=None, bits_weights=None, bits_bias=None,
                  overrides=None, train_with_fp_copy=False):
@@ -119,13 +133,14 @@ class Quantizer(object):
         self.optimizer = optimizer
 
         # Stash some quantizer data in the model so we can re-apply the quantizer on a resuming model
-        self.model.quantizer_metadata = {'type': type(self),
+        self.model.quantizer_metadata = {'type': type(self),  # Quantizer type
                                          'params': {'bits_activations': bits_activations,
                                                     'bits_weights': bits_weights,
                                                     'bits_bias': bits_bias,
                                                     'overrides': copy.deepcopy(overrides)}}
 
-        for k, v in self.overrides.items():
+        # Re-assemble overriding bitwidths as a QBits object
+        for k, v in self.overrides.items():  # regexp of module name -> override dict
             if any(old_bits_key in v.keys() for old_bits_key in ['acts', 'wts', 'bias']):
                 raise ValueError("Using 'acts' / 'wts' / 'bias' to specify bit-width overrides is deprecated.\n"
                                  "Please use the full parameter names: "
@@ -140,7 +155,7 @@ class Quantizer(object):
         regex_overrides = None
         if overrides:
             patterns = list(overrides.keys())
-            regex_overrides_str = '|'.join(['(^{0}$)'.format(pattern) for pattern in patterns])
+            regex_overrides_str = '|'.join(['(^{0}$)'.format(pattern) for pattern in patterns])  # the first match wins
             regex_overrides = re.compile(regex_overrides_str)
 
         self.module_qbits_map = {}
@@ -150,24 +165,29 @@ class Quantizer(object):
             # module with a wrapper module called 'module' :)
             name_to_match = module_full_name.replace('module.', '', 1)
             qbits = self.default_qbits
+
+            # perfect match (overrides: OrderedDict)
             override_entry = self.overrides.get(name_to_match, OrderedDict())
-            if regex_overrides:
+
+            # match by regexp
+            if regex_overrides:     # if override dict specified
                 m_overrides = regex_overrides.match(name_to_match)
-                if m_overrides:
-                    group_idx = 0
+                if m_overrides:     # matching success
+                    group_idx = 0   # idx of matching pattern
                     groups = m_overrides.groups()
                     while groups[group_idx] is None:
                         group_idx += 1
                     override_entry = copy.deepcopy(override_entry or self.overrides[patterns[group_idx]])
-                    qbits = override_entry.pop('bits', self.default_qbits)
+                    qbits = override_entry.pop('bits', self.default_qbits)  # override_entry -> others + qbits
 
-            self._add_qbits_entry(module_full_name, type(module), qbits)
-            self._add_override_entry(module_full_name, override_entry)
+            self._add_qbits_entry(module_full_name, type(module), qbits)    # update self.module_qbits_map
+            self._add_override_entry(module_full_name, override_entry)      # update module_overrides_map
 
         # Mapping from module type to function generating a replacement module suited for quantization
         # To be populated by child classes
         # Unspecified layer types return None by default.
-        self.replacement_factory = defaultdict(lambda: None)
+        self.replacement_factory = defaultdict(lambda: None)  # module_type -> wrapper_factory
+
         # Pointer to parameters quantization function, triggered during training process
         # To be populated by child classes
         self.param_quantization_fn = None
@@ -214,20 +234,20 @@ class Quantizer(object):
         msglogger.info('Quantized model:\n\n{0}\n'.format(self.model))
 
     def _prepare_model_impl(self):
-        r"""
+        """
         Iterates over the model and replaces modules with their quantized counterparts as defined by
         self.replacement_factory
         """
         msglogger.info('Preparing model for quantization using {0}'.format(self.__class__.__name__))
-        self._pre_process_container(self.model)
+        self._pre_process_container(self.model)  # replace modules
 
+        # hack float backup parameters, populate ``self.params_to_quantize``
         for module_name, module in self.model.named_modules():
             qbits = self.module_qbits_map[module_name]
             curr_parameters = dict(module.named_parameters())
             for param_name, param in curr_parameters.items():
                 n_bits = qbits.bias if param_name.endswith('bias') else qbits.wts
-                if n_bits is None:
-                    continue
+                if n_bits is None: continue
                 fp_attr_name = param_name
                 if self.train_with_fp_copy:
                     hack_float_backup_parameter(module, param_name, n_bits)
@@ -235,8 +255,7 @@ class Quantizer(object):
                 self.params_to_quantize.append(_ParamToQuant(module, module_name, fp_attr_name, param_name, n_bits))
 
                 param_full_name = '.'.join([module_name, param_name])
-                msglogger.info(
-                    "Parameter '{0}' will be quantized to {1} bits".format(param_full_name, n_bits))
+                msglogger.info("Parameter '{0}' will be quantized to {1} bits".format(param_full_name, n_bits))
 
         # If an optimizer was passed, assume we need to update it
         if self.optimizer:
@@ -245,21 +264,23 @@ class Quantizer(object):
             self.optimizer.__setstate__({'param_groups': new_optimizer.param_groups})
 
     def _pre_process_container(self, container, prefix=''):
+
         # Iterate through model, insert quantization functions as appropriate
         for name, module in container.named_children():
             full_name = prefix + name
-            if module in self.modules_processed:
+
+            if module in self.modules_processed:  # referencing to a module already replaced
                 previous_name, previous_wrapper = self.modules_processed[module]
                 warnings.warn("Module '{0}' references to same module as '{1}'."
                               ' Replacing with reference the same wrapper.'.format(full_name, previous_name),
                               UserWarning)
                 if previous_wrapper:
-                    msglogger.debug('Module {0}: Replacing \n{1} with \n{2}'.
-                                    format(full_name, module, previous_wrapper))
-                    setattr(container, name, previous_wrapper)
+                    msglogger.debug('Module {0}: Replacing \n{1} with \n{2}'. format(full_name, module, previous_wrapper))
+                    setattr(container, name, previous_wrapper)  # point to previous wrapper
                 else:
                     msglogger.debug('Module {0}: Skipping \n{1}.'.format(full_name, module))
                 continue
+
             current_qbits = self.module_qbits_map[full_name]
             if current_qbits.acts is None and current_qbits.wts is None:
                 if self.module_overrides_map[full_name]:
@@ -270,6 +291,7 @@ class Quantizer(object):
                 continue
 
             # We use a type hint comment to let IDEs know replace_fn is a function
+            # replacement factory: module type -> func
             replace_fn = self.replacement_factory[type(module)]  # type: Optional[Callable]
             # If the replacement function wasn't specified - continue without replacing this module.
             if replace_fn is not None:
@@ -278,6 +300,7 @@ class Quantizer(object):
                     raise TypeError("""Quantizer of type %s doesn't accept \"%s\" 
                                         as override arguments for %s. Allowed kwargs: %s"""
                                     % (type(self), list(invalid_kwargs), type(module), list(valid_kwargs)))
+
                 new_module = replace_fn(module, full_name, self.module_qbits_map, **valid_kwargs)
                 msglogger.debug('Module {0}: Replacing \n{1} with \n{2}'.format(full_name, module, new_module))
                 # Add to history of prepared submodules

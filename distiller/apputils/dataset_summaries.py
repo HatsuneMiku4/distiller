@@ -19,6 +19,8 @@ import numpy as np
 import logging
 msglogger = logging.getLogger()
 
+
+# noinspection PyUnboundLocalVariable
 def dataset_summary(data_loader):
     """Create a histogram of class membership distribution within a dataset.
 

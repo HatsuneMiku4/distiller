@@ -20,11 +20,14 @@
 - RegularizationPolicy: regulization scheduling
 - LRPolicy: learning-rate decay scheduling
 """
+
+# from functools import partial
+import logging
+from collections import namedtuple
+
 import torch
 import torch.optim.lr_scheduler
-from collections import namedtuple
-#from functools import partial
-import logging
+
 msglogger = logging.getLogger()
 
 __all__ = ['PruningPolicy', 'RegularizationPolicy', 'QuantizationPolicy', 'LRPolicy', 'ScheduledTrainingPolicy',
@@ -39,6 +42,7 @@ class ScheduledTrainingPolicy(object):
 
     The CompressionScheduler invokes these methods as the training progresses.
     """
+
     def __init__(self, classes=None, layers=None):
         self.classes = classes
         self.layers = layers
@@ -83,6 +87,7 @@ class ScheduledTrainingPolicy(object):
 class PruningPolicy(ScheduledTrainingPolicy):
     """Base class for pruning policies.
     """
+
     def __init__(self, pruner, pruner_args, classes=None, layers=None):
         """
         Arguments:
@@ -116,7 +121,7 @@ class PruningPolicy(ScheduledTrainingPolicy):
         self.mask_gradients = pruner_args.get('mask_gradients', False)
         if self.mask_gradients and not self.mask_on_forward_only:
             raise ValueError("mask_gradients and (not mask_on_forward_only) are mutually exclusive")
-        self.backward_hook_handle = None   # The backward-callback handle
+        self.backward_hook_handle = None  # The backward-callback handle
         self.use_double_copies = pruner_args.get('use_double_copies', False)
         self.discard_masks_at_minibatch_end = pruner_args.get('discard_masks_at_minibatch_end', False)
         self.skip_first_minibatch = pruner_args.get('skip_first_minibatch', False)
@@ -151,9 +156,8 @@ class PruningPolicy(ScheduledTrainingPolicy):
                            zeros_mask_dict, meta, optimizer=None):
         set_masks = False
         global_mini_batch_id = epoch * minibatches_per_epoch + minibatch_id
-        if ((minibatch_id > 0) and
-            (self.mini_batch_pruning_frequency != 0) and
-            (global_mini_batch_id % self.mini_batch_pruning_frequency == 0)):
+        if ((minibatch_id > 0) and (self.mini_batch_pruning_frequency != 0) and (
+                global_mini_batch_id % self.mini_batch_pruning_frequency == 0)):
             # This is _not_ the first mini-batch of a new epoch (performed in on_epoch_begin)
             # and a pruning step is scheduled
             set_masks = True
@@ -195,6 +199,7 @@ class RegularizationPolicy(ScheduledTrainingPolicy):
     """Regularization policy.
 
     """
+
     def __init__(self, regularizer, keep_mask=False):
         super(RegularizationPolicy, self).__init__()
         self.regularizer = regularizer
@@ -220,7 +225,7 @@ class RegularizationPolicy(ScheduledTrainingPolicy):
             return
 
         keep_mask = False
-        if (minibatches_per_epoch-1 == minibatch_id) and self.is_last_epoch and self.keep_mask:
+        if (minibatches_per_epoch - 1 == minibatch_id) and self.is_last_epoch and self.keep_mask:
             # If this is the last mini_batch in the last epoch, and the scheduler wants to
             # keep the regularization mask, then now is the time ;-)
             msglogger.info("RegularizationPolicy is keeping the regularization mask")
@@ -237,6 +242,7 @@ class LRPolicy(ScheduledTrainingPolicy):
     """Learning-rate decay scheduling policy.
 
     """
+
     def __init__(self, lr_scheduler):
         super(LRPolicy, self).__init__()
         self.lr_scheduler = lr_scheduler

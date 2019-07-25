@@ -20,17 +20,19 @@ This module contains various tensor sparsity/density measurement functions, toge
 with some random helper functions.
 """
 import argparse
-from collections import OrderedDict
-from copy import deepcopy
+import inspect
 import logging
 import operator
 import random
+from collections import OrderedDict
+from copy import deepcopy
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.backends.cudnn as cudnn
+import torch.nn as nn
 import yaml
-import inspect
+
 import distiller
 
 msglogger = logging.getLogger()
@@ -67,7 +69,7 @@ def size2str(torch_size):
 def size_to_str(torch_size):
     """Convert a pytorch Size object to a string"""
     assert isinstance(torch_size, torch.Size) or isinstance(torch_size, tuple) or isinstance(torch_size, list)
-    return '('+(', ').join(['%d' % v for v in torch_size])+')'
+    return '(' + ', '.join(['%d' % v for v in torch_size]) + ')'
 
 
 def pretty_int(i):
@@ -121,7 +123,7 @@ def normalize_module_name(layer_name):
     """Normalize a module's name.
 
     PyTorch let's you parallelize the computation of a model, by wrapping a model with a
-    DataParallel module.  Unfortunately, this changs the fully-qualified name of a module,
+    DataParallel module.  Unfortunately, this changes the fully-qualified name of a module,
     even though the actual functionality of the module doesn't change.
     Many time, when we search for modules by name, we are indifferent to the DataParallel
     module and want to use the same module name whether the module is parallel or not.
@@ -141,7 +143,7 @@ def denormalize_module_name(parallel_model, normalized_name):
     if len(fully_qualified_name) > 0:
         return fully_qualified_name[-1]
     else:
-        return normalized_name   # Did not find a module with the name <normalized_name>
+        return normalized_name  # Did not find a module with the name <normalized_name>
 
 
 def volume(tensor):
@@ -194,7 +196,7 @@ def sparsity_3D(tensor):
     view_3d = tensor.view(-1, tensor.size(1) * tensor.size(2) * tensor.size(3))
     num_filters = view_3d.size()[0]
     nonzero_filters = len(torch.nonzero(view_3d.abs().sum(dim=1)))
-    return 1 - nonzero_filters/num_filters
+    return 1 - nonzero_filters / num_filters
 
 
 def density_3D(tensor):
@@ -231,7 +233,7 @@ def sparsity_2D(tensor):
 
     num_structs = view_2d.size()[0]
     nonzero_structs = len(torch.nonzero(view_2d.abs().sum(dim=1)))
-    return 1 - nonzero_structs/num_structs
+    return 1 - nonzero_structs / num_structs
 
 
 def density_2D(tensor):
@@ -255,7 +257,7 @@ def sparsity_ch(tensor):
     # Now group by channels
     k_sums_mat = kernel_sums.view(num_filters, num_kernels_per_filter).t()
     nonzero_channels = len(torch.nonzero(k_sums_mat.abs().sum(dim=1)))
-    return 1 - nonzero_channels/num_kernels_per_filter
+    return 1 - nonzero_channels / num_kernels_per_filter
 
 
 def density_ch(tensor):
@@ -286,22 +288,22 @@ def sparsity_blocks(tensor, block_shape):
     # Create a view where each block is a column
     if block_depth > 1:
         view_dims = (
-            num_filters*num_channels//(block_repetitions*block_depth),
-            block_repetitions*block_depth,
+            num_filters * num_channels // (block_repetitions * block_depth),
+            block_repetitions * block_depth,
             kernel_size,
-            )
+        )
     else:
         view_dims = (
             num_filters // block_repetitions,
             block_repetitions,
             -1,
-            )
+        )
     view1 = tensor.view(*view_dims)
 
     # Next, compute the sums of each column (block)
     block_sums = view1.abs().sum(dim=1)
     nonzero_blocks = len(torch.nonzero(block_sums))
-    return 1 - nonzero_blocks/num_super_blocks
+    return 1 - nonzero_blocks / num_super_blocks
 
 
 def sparsity_matrix(tensor, dim):
@@ -310,8 +312,8 @@ def sparsity_matrix(tensor, dim):
         return 0
 
     num_structs = tensor.size()[dim]
-    nonzero_structs = len(torch.nonzero(tensor.abs().sum(dim=1-dim)))
-    return 1 - nonzero_structs/num_structs
+    nonzero_structs = len(torch.nonzero(tensor.abs().sum(dim=1 - dim)))
+    return 1 - nonzero_structs / num_structs
 
 
 def sparsity_cols(tensor, transposed=True):
@@ -348,19 +350,23 @@ def density_rows(tensor, transposed=True):
     return 1 - sparsity_rows(tensor, transposed)
 
 
-def model_sparsity(model, param_dims=[2, 4]):
+def model_sparsity(model, param_dims=None):
     """Returns the model sparsity as a fraction in [0..1]"""
+    if param_dims is None:
+        param_dims = [2, 4]
     sparsity, _, _ = model_params_stats(model, param_dims)
     return sparsity
 
 
-def model_params_size(model, param_dims=[2, 4]):
+def model_params_size(model, param_dims=None):
     """Returns the model sparsity as a fraction in [0..1]"""
+    if param_dims is None:
+        param_dims = [2, 4]
     _, _, sparse_params_cnt = model_params_stats(model, param_dims)
     return sparse_params_cnt
 
 
-def model_params_stats(model, param_dims=[2, 4]):
+def model_params_stats(model, param_dims=None):
     """Returns the model sparsity, weights count, and the count of weights in the sparse model.
 
     Returns:
@@ -369,6 +375,8 @@ def model_params_stats(model, param_dims=[2, 4]):
         params_nnz_cnt - the number of weights in the entire model, excluding zeros.
                          nnz stands for non-zeros.
     """
+    if param_dims is None:
+        param_dims = [2, 4]
     params_cnt = 0
     params_nnz_cnt = 0
     for name, param in model.state_dict().items():
@@ -376,7 +384,7 @@ def model_params_stats(model, param_dims=[2, 4]):
             _density = density(param)
             params_cnt += torch.numel(param)
             params_nnz_cnt += param.numel() * _density
-    model_sparsity = (1 - params_nnz_cnt/params_cnt)*100
+    model_sparsity = (1 - params_nnz_cnt / params_cnt) * 100
     return model_sparsity, params_cnt, params_nnz_cnt
 
 
@@ -392,8 +400,10 @@ def norm_filters(weights, p=1):
     return weights.view(weights.size(0), -1).norm(p=p, dim=1)
 
 
-def model_numel(model, param_dims=[2, 4]):
+def model_numel(model, param_dims=None):
     """Count the number elements in a model's parameter tensors"""
+    if param_dims is None:
+        param_dims = [2, 4]
     total_numel = 0
     for name, param in model.state_dict().items():
         # Extract just the actual parameter's name, which in this context we treat as its "type"
@@ -471,7 +481,8 @@ def activation_channels_apoz(activation):
     """
     if activation.dim() == 4:
         view_2d = activation.view(-1, activation.size(2) * activation.size(3))  # (batch*channels) x (h*w)
-        featuremap_apoz = view_2d.abs().gt(0).sum(dim=1).float() / (activation.size(2) * activation.size(3))  # (batch*channels) x 1
+        featuremap_apoz = view_2d.abs().gt(0).sum(dim=1).float() / (
+                    activation.size(2) * activation.size(3))  # (batch*channels) x 1
         featuremap_apoz_mat = featuremap_apoz.view(activation.size(0), activation.size(1))  # batch x channels
     elif activation.dim() == 2:
         featuremap_apoz_mat = activation.abs().gt(0).sum(dim=1).float() / activation.size(1)  # batch x 1
@@ -605,6 +616,7 @@ def make_non_parallel_copy(model):
 
     torch.nn.DataParallel instances are removed.
     """
+
     def replace_data_parallel(container):
         for name, module in container.named_children():
             if isinstance(module, nn.DataParallel):
@@ -629,12 +641,12 @@ def set_seed(seed):
 
 
 def set_deterministic(seed=0):
-    '''Try to configure the system for reproducible results.
+    """Try to configure the system for reproducible results.
 
     Experiment reproducibility is sometimes important.  Pete Warden expounded about this
     in his blog: https://petewarden.com/2018/03/19/the-machine-learning-reproducibility-crisis/
     For Pytorch specifics see: https://pytorch.org/docs/stable/notes/randomness.html#reproducibility
-    '''
+    """
     msglogger.debug('set_deterministic was invoked')
     if seed is None:
         seed = 0
@@ -648,6 +660,7 @@ def yaml_ordered_load(stream, Loader=yaml.Loader, object_pairs_hook=OrderedDict)
 
     See: https://stackoverflow.com/questions/5121931/in-python-how-can-you-load-yaml-mappings-as-ordereddicts
     """
+
     class OrderedLoader(Loader):
         pass
 
@@ -671,6 +684,7 @@ def float_range_argparse_checker(min_val=0., max_val=1., exc_min=False, exc_max=
             return val
         raise argparse.ArgumentTypeError(
             'Value must be {} {} and {} {} (received {})'.format(min_op_str, min_val, max_op_str, max_val, val))
+
     if min_val >= max_val:
         raise ValueError('min_val must be less than max_val')
     return checker
@@ -705,4 +719,3 @@ def convert_tensors_recursively_to(val, *args, **kwargs):
         return type(val)(convert_tensors_recursively_to(item, *args, **kwargs) for item in val)
 
     return val
-

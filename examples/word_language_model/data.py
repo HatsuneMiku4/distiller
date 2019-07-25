@@ -1,5 +1,7 @@
 import os
+
 import torch
+
 
 class Dictionary(object):
     def __init__(self):
@@ -24,10 +26,8 @@ class Corpus(object):
         self.test = self.tokenize(os.path.join(path, 'test.txt'))
 
     def tokenize(self, path):
-        """Tokenizes a text file."""
+        """Tokenizes a text file and Add words to the dictionary."""
         assert os.path.exists(path)
-        # Add words to the dictionary
-        # Opening file with utf-8 encoding:
         with open(path, 'r', encoding='utf-8') as f:
             tokens = 0
             for line in f:

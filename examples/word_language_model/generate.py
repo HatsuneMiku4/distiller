@@ -3,64 +3,62 @@
 #
 # This file generates new sentences sampled from the language model
 #
-###############################################################################
-
-import argparse
-
-import torch
-from torch.autograd import Variable
-
-import data
-
 # Set up the paths to import distiller.
 # Distiller is not explicitly used by this script, but because main.py serializes the
 # entire model (look for 'torch.save(model, f)' in main.py), it also creates a
 # dependency on distiller code.
 # It's a bit ironic that PyTorch's docs advise against this kind of serialization,
 # while PyTorch's samples use it: https://pytorch.org/docs/master/notes/serialization.html
-import distiller
+###############################################################################
 
+import argparse
+
+import torch
+
+import data
+
+# <editor-fold desc=">>> Arguments">
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model')
 
 # Model parameters.
-parser.add_argument('--data', type=str, default='./data/wikitext-2',
-                    help='location of the data corpus')
-parser.add_argument('--checkpoint', type=str, default='./model.pt',
-                    help='model checkpoint to use')
-parser.add_argument('--outf', type=str, default='generated.txt',
-                    help='output file for generated text')
-parser.add_argument('--words', type=int, default='1000',
-                    help='number of words to generate')
-parser.add_argument('--seed', type=int, default=1111,
-                    help='random seed')
-parser.add_argument('--cuda', action='store_true',
-                    help='use CUDA')
-parser.add_argument('--temperature', type=float, default=1.0,
-                    help='temperature - higher will increase diversity')
-parser.add_argument('--log-interval', type=int, default=100,
-                    help='reporting interval')
+parser.add_argument('--data', type=str, default='./data/wikitext-2', help='location of the data corpus')
+parser.add_argument('--checkpoint', type=str, default='./model.pt', help='model checkpoint to use')
+parser.add_argument('--outf', type=str, default='generated.txt', help='output file for generated text')
+parser.add_argument('--words', type=int, default='1000', help='number of words to generate')
+parser.add_argument('--seed', type=int, default=1111, help='random seed')
+parser.add_argument('--cuda', action='store_true', help='use CUDA')
+parser.add_argument('--temperature', type=float, default=1.0, help='temperature - higher will increase diversity')
+parser.add_argument('--log-interval', type=int, default=100, help='reporting interval')
 args = parser.parse_args()
 
+if args.temperature < 1e-3:
+    parser.error("--temperature has to be greater or equal 1e-3")
+# </editor-fold>
+
+# <editor-fold desc=">>> Setup CUDA & RNG">
 # Set the random seed manually for reproducibility.
-#torch.manual_seed(args.seed)
+# torch.manual_seed(args.seed)
 if torch.cuda.is_available():
     if not args.cuda:
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 device = torch.device("cuda" if args.cuda else "cpu")
+# </editor-fold>
 
-if args.temperature < 1e-3:
-    parser.error("--temperature has to be greater or equal 1e-3")
-
+# <editor-fold desc=">>> Load Model">
 with open(args.checkpoint, 'rb') as f:
     model = torch.load(f).to(device)
 model.eval()
+# </editor-fold>
 
+# <editor-fold desc=">>> Load Data">
 corpus = data.Corpus(args.data)
 ntokens = len(corpus.dictionary)
 hidden = model.init_hidden(1)
 input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+# </editor-fold>
 
+# <editor-fold desc=">>> Generate">
 with open(args.outf, 'w') as outf:
     with torch.no_grad():  # no tracking history
         for i in range(args.words):
@@ -74,3 +72,5 @@ with open(args.outf, 'w') as outf:
 
             if i % args.log_interval == 0:
                 print('| Generated {}/{} words'.format(i, args.words))
+# </editor-fold>
+

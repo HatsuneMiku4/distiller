@@ -89,9 +89,9 @@ def log_execution_env_state(config_paths=None, logdir=None, gitroot='.'):
         logger.debug("PYTHONPATH: %s", os.environ['PYTHONPATH'])
     except KeyError:
         pass
+
     def _pip_freeze():
-        return {x.key:x.version for x in sorted(pkg_resources.working_set,
-                                                key=operator.attrgetter('key'))}
+        return {x.key: x.version for x in sorted(pkg_resources.working_set, key=operator.attrgetter('key'))}
     logger.debug("pip freeze: {}".format(_pip_freeze()))
     log_git_state()
     logger.debug("Command line: %s", " ".join(sys.argv))
